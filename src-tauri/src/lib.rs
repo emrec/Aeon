@@ -24,6 +24,11 @@ async fn download(hash: String) -> Result<(), String> {
     transfer::start_download(hash).await
 }
 
+#[tauri::command]
+async fn get_gossip_peers(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<u32, String> {
+    Ok(state.peer_count)
+}
+
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,7 +42,7 @@ pub fn run() {
             app.manage(client);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![publish, query, download])
+        .invoke_handler(tauri::generate_handler![publish, query, download, get_gossip_peers])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
