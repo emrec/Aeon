@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import "./App.css";
 import { Search } from "./components/Search";
 import { Transfers } from "./components/Transfers";
+import { Share } from "./components/Share";
 import { TrustManager } from "./components/TrustManager";
-import { Search as SearchIcon, Download, ShieldCheck, Wifi } from "lucide-react";
+import { Search as SearchIcon, Download, ShieldCheck, Wifi, Share2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 function App() {
@@ -56,6 +57,7 @@ function App() {
           >
             <SearchIcon size={18} className={activeTab === "search" ? "text-blue-400" : "text-[#94a3b8]"} /> Discover
           </button>
+          
           <button
             onClick={() => setActiveTab("transfers")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-250 cursor-pointer ${
@@ -64,8 +66,20 @@ function App() {
                 : "hover:bg-slate-800/40 text-[#94a3b8] hover:text-[#f8fafc] font-medium"
             }`}
           >
-            <Download size={18} className={activeTab === "transfers" ? "text-blue-400" : "text-[#94a3b8]"} /> Transfers
+            <Download size={18} className={activeTab === "transfers" ? "text-blue-400" : "text-[#94a3b8]"} /> Downloads
           </button>
+
+          <button
+            onClick={() => setActiveTab("share")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-250 cursor-pointer ${
+              activeTab === "share" 
+                ? "bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30 glow-blue" 
+                : "hover:bg-slate-800/40 text-[#94a3b8] hover:text-[#f8fafc] font-medium"
+            }`}
+          >
+            <Share2 size={18} className={activeTab === "share" ? "text-blue-400" : "text-[#94a3b8]"} /> Share
+          </button>
+          
           <button
             onClick={() => setActiveTab("trust")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-250 cursor-pointer ${
@@ -97,6 +111,7 @@ function App() {
       <main className="flex-1 overflow-auto z-10 relative">
         {activeTab === "search" && <Search />}
         {activeTab === "transfers" && <Transfers />}
+        {activeTab === "share" && <Share />}
         {activeTab === "trust" && <TrustManager />}
       </main>
     </div>
