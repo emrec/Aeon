@@ -20,8 +20,14 @@ async fn query(state: tauri::State<'_, daemon::MockIrohClient>, channel: String)
 }
 
 #[tauri::command]
-async fn download(hash: String) -> Result<(), String> {
-    transfer::start_download(hash).await
+async fn download(state: tauri::State<'_, daemon::MockIrohClient>, hash: String) -> Result<(), String> {
+    transfer::start_download(&state, hash).await
+}
+
+#[tauri::command]
+async fn get_transfers(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<Vec<transfer::TransferState>, String> {
+    let guard = state.transfers.lock().unwrap();
+    Ok(guard.clone())
 }
 
 #[tauri::command]
@@ -36,13 +42,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let app_data_dir = app.path().app_data_dir().expect("Failed to get app data dir");
             let client = tauri::async_runtime::block_on(async {
-                daemon::start_memory_node().await.expect("Failed to start Iroh node")
+                daemon::start_memory_node(app_data_dir).await.expect("Failed to start Iroh node")
             });
             app.manage(client);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![publish, query, download, get_gossip_peers])
+        .invoke_handler(tauri::generate_handler![publish, query, download, get_transfers, get_gossip_peers])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
