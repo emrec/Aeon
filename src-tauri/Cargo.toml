@@ -28,3 +28,4 @@ iroh = "1.0.2"
 iroh-blobs = { version = "0.103.0", features = ["fs-store"] }
 futures = "0.3"
 rfd = "0.15"
+nostr-sdk = "0.34"

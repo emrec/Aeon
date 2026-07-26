@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, HardDrive, Inbox, FileUp, FolderUp, Copy, Check, Info, Trash2 } from "lucide-react";
+import { X, HardDrive, Inbox, FileUp, FolderUp, Copy, Check, Info, Trash2, Globe } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Transfer {
@@ -16,15 +16,22 @@ interface Transfer {
 export function Share() {
   const [shares, setShares] = useState<Transfer[]>([]);
   const [generatedTicket, setGeneratedTicket] = useState<string | null>(null);
+  const [newShareName, setNewShareName] = useState<string>("");
+  const [newShareSize, setNewShareSize] = useState<number>(0);
+  
   const [copied, setCopied] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSharing, setIsSharing] = useState(false);
+  
+  // Nostr publish states
+  const [publishChannel, setPublishChannel] = useState("Software");
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishSuccess, setPublishSuccess] = useState(false);
 
   const fetchShares = async () => {
     try {
       const list = await invoke<Transfer[]>("get_transfers");
-      // Only show files/folders that we shared (seeding/completed uploads, i.e., is_downloading is false)
       setShares(list.filter(t => !t.is_downloading));
     } catch (err) {
       console.error("Failed to fetch shared files:", err);
@@ -48,9 +55,30 @@ export function Share() {
   const handleShareFile = async () => {
     setIsSharing(true);
     setErrorMsg(null);
+    setPublishSuccess(false);
     try {
+      // Pick file natively, import to store, and return ticket
+      // In lib.rs, we modified it to return the ticket string.
+      // Wait, let's get the file details too.
+      // Since share_file does the selection internally, we can obtain name and size from the returned ticket/transfer list.
       const ticket = await invoke<string>("share_file");
       setGeneratedTicket(ticket);
+      
+      // Query transfers to get the newly added file details for Nostr publishing
+      setTimeout(async () => {
+        try {
+          const list = await invoke<Transfer[]>("get_transfers");
+          const sharedList = list.filter(t => !t.is_downloading);
+          if (sharedList.length > 0) {
+            const newest = sharedList[sharedList.length - 1];
+            setNewShareName(newest.name);
+            setNewShareSize(newest.size);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }, 500);
+
       fetchShares();
     } catch (err: any) {
       if (err !== "Selection cancelled") {
@@ -64,9 +92,25 @@ export function Share() {
   const handleShareFolder = async () => {
     setIsSharing(true);
     setErrorMsg(null);
+    setPublishSuccess(false);
     try {
       const ticket = await invoke<string>("share_folder");
       setGeneratedTicket(ticket);
+
+      setTimeout(async () => {
+        try {
+          const list = await invoke<Transfer[]>("get_transfers");
+          const sharedList = list.filter(t => !t.is_downloading);
+          if (sharedList.length > 0) {
+            const newest = sharedList[sharedList.length - 1];
+            setNewShareName(newest.name);
+            setNewShareSize(newest.size);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }, 500);
+
       fetchShares();
     } catch (err: any) {
       if (err !== "Selection cancelled") {
@@ -74,6 +118,26 @@ export function Share() {
       }
     } finally {
       setIsSharing(false);
+    }
+  };
+
+  const handlePublishToNostr = async () => {
+    if (!generatedTicket) return;
+    setIsPublishing(true);
+    setPublishSuccess(false);
+    try {
+      await invoke("publish", {
+        name: newShareName || "Shared Archive",
+        size: newShareSize || 0,
+        hash: generatedTicket, // Pass the ticket so peers download from it directly
+        channel: publishChannel,
+      });
+      setPublishSuccess(true);
+    } catch (err) {
+      console.error("Nostr publish failed", err);
+      setErrorMsg("Failed to publish to Nostr relays: " + err);
+    } finally {
+      setIsPublishing(false);
     }
   };
 
@@ -140,18 +204,18 @@ export function Share() {
 
         {/* Error notification */}
         {errorMsg && (
-          <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex gap-3 text-red-400 text-xs">
+          <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex gap-3 text-red-400 text-xs animate-pulse-slow">
             <Info size={16} className="shrink-0" />
             <div>
-              <p className="font-bold">Error sharing content</p>
+              <p className="font-bold">Notice</p>
               <p className="mt-0.5 text-red-300/80">{errorMsg}</p>
             </div>
           </div>
         )}
 
-        {/* Success Modal / Display Card for newly generated ticket */}
+        {/* Success Modal / Display Card for newly generated ticket & Nostr Index publishing */}
         {generatedTicket && (
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-blue-950/20 to-indigo-950/20 border border-blue-500/20 shadow-xl flex flex-col relative overflow-hidden animate-in fade-in zoom-in duration-300">
+          <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-950/20 to-indigo-950/20 border border-blue-500/20 shadow-xl flex flex-col relative overflow-hidden animate-in fade-in zoom-in duration-300">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
             <button 
               onClick={() => setGeneratedTicket(null)}
@@ -159,14 +223,16 @@ export function Share() {
             >
               <X size={16} />
             </button>
-            <div className="flex items-center gap-3 mb-3">
+            <div className="flex items-center gap-3 mb-2">
               <div className="w-7 h-7 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm">✓</div>
               <h3 className="font-bold text-slate-200 text-sm">Successfully Seeding & Synced!</h3>
             </div>
             <p className="text-xs text-slate-400 max-w-xl mb-4 leading-relaxed">
-              Your content has been added to Iroh. Share the ticket below with peers so they can connect and download the files directly.
+              Your content has been added to Iroh. Copy the ticket or publish it instantly to the Nostr catalog to make it globally discoverable.
             </p>
-            <div className="flex gap-2">
+            
+            {/* Copy ticket bar */}
+            <div className="flex gap-2 mb-6">
               <input 
                 type="text" 
                 readOnly 
@@ -180,6 +246,40 @@ export function Share() {
                 {copied ? <Check size={16} /> : <Copy size={16} />}
                 {copied ? "Copied!" : "Copy Ticket"}
               </button>
+            </div>
+
+            {/* Nostr Publishing panel */}
+            <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Globe className="text-blue-400 animate-pulse-slow" size={20} />
+                <div>
+                  <h4 className="text-xs font-bold text-slate-200">Decentralized Search Catalog</h4>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Publish NIP-94 File Metadata event to public Nostr relays</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 items-center w-full md:w-auto shrink-0">
+                <select 
+                  value={publishChannel}
+                  onChange={(e) => setPublishChannel(e.target.value)}
+                  className="bg-slate-900 border border-slate-800 text-xs text-slate-300 rounded-xl px-3 py-2 focus:outline-none"
+                >
+                  <option value="Software">Software</option>
+                  <option value="Media">Media</option>
+                  <option value="Documents">Documents</option>
+                </select>
+                
+                <button
+                  onClick={handlePublishToNostr}
+                  disabled={isPublishing || publishSuccess}
+                  className={`px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                    publishSuccess ? "bg-emerald-600/15 text-emerald-400 border border-emerald-500/20" :
+                    "bg-blue-600 hover:bg-blue-500 text-white glow-blue"
+                  }`}
+                >
+                  {isPublishing ? "Publishing..." : publishSuccess ? "✓ Published!" : "Publish to Nostr"}
+                </button>
+              </div>
             </div>
           </div>
         )}
