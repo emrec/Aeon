@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Hash, Download, Send, FileCode2 } from "lucide-react";
+import { Hash, Download, Send, FileCode2, Film } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface ChannelFeedViewProps {
   channel: string;
   onDownloadStarted: () => void;
+  onStreamMedia?: (title: string, protocol: string) => void;
 }
 
 interface ChannelPost {
@@ -21,7 +22,7 @@ interface ChannelPost {
   };
 }
 
-export function ChannelFeedView({ channel, onDownloadStarted }: ChannelFeedViewProps) {
+export function ChannelFeedView({ channel, onDownloadStarted, onStreamMedia }: ChannelFeedViewProps) {
   const [messages, setMessages] = useState<ChannelPost[]>([
     {
       id: "1",
@@ -125,13 +126,25 @@ export function ChannelFeedView({ channel, onDownloadStarted }: ChannelFeedViewP
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleDownloadFile(post.file!.hash)}
-                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer glow-blue shrink-0"
-                  >
-                    <Download size={13} />
-                    Download
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {onStreamMedia && (
+                      <button
+                        onClick={() => onStreamMedia(post.file!.name, post.file!.protocol)}
+                        className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Film size={13} />
+                        Stream
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => handleDownloadFile(post.file!.hash)}
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer glow-blue"
+                    >
+                      <Download size={13} />
+                      Download
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

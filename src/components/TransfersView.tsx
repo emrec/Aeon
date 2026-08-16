@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Play, Pause, Trash2, HardDrive, Copy, Check } from "lucide-react";
+import { Play, Pause, Trash2, HardDrive, Copy, Check, Film } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { TransferItem } from "./BottomInspector";
 
@@ -7,6 +7,7 @@ interface TransfersViewProps {
   transfers: TransferItem[];
   selectedTransfer: TransferItem | null;
   onSelectTransfer: (t: TransferItem | null) => void;
+  onStreamMedia?: (t: TransferItem) => void;
   statusFilter: string;
   onRefresh: () => void;
 }
@@ -15,6 +16,7 @@ export function TransfersView({
   transfers,
   selectedTransfer,
   onSelectTransfer,
+  onStreamMedia,
   statusFilter,
   onRefresh,
 }: TransfersViewProps) {
@@ -181,6 +183,19 @@ export function TransfersView({
 
                 {/* Actions */}
                 <div className="col-span-1 flex items-center justify-end gap-1.5 shrink-0">
+                  {onStreamMedia && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onStreamMedia(item);
+                      }}
+                      title="Stream / Play Media"
+                      className="p-1 text-blue-400 hover:text-white hover:bg-blue-600/30 rounded transition-colors cursor-pointer"
+                    >
+                      <Film size={13} />
+                    </button>
+                  )}
+
                   {item.status === "Paused" ? (
                     <button
                       onClick={(e) => handleResume(e, item)}

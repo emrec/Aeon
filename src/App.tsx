@@ -7,6 +7,7 @@ import { TransfersView } from "./components/TransfersView";
 import { BottomInspector, TransferItem } from "./components/BottomInspector";
 import { ChannelFeedView } from "./components/ChannelFeedView";
 import { AddTransferModal } from "./components/AddTransferModal";
+import { MediaPlayer, MediaStreamSource } from "./components/MediaPlayer";
 import {
   Search as SearchIcon,
   ShieldCheck,
@@ -27,6 +28,7 @@ function App() {
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
   const [selectedTransfer, setSelectedTransfer] = useState<TransferItem | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [activeMedia, setActiveMedia] = useState<MediaStreamSource | null>(null);
 
   // Poll transfers and peer count
   const fetchTransfers = async () => {
@@ -358,6 +360,13 @@ function App() {
                 transfers={transfers}
                 selectedTransfer={selectedTransfer}
                 onSelectTransfer={setSelectedTransfer}
+                onStreamMedia={(item) =>
+                  setActiveMedia({
+                    id: item.id,
+                    title: item.name,
+                    protocol: item.protocol,
+                  })
+                }
                 statusFilter={activeView.replace("transfers-", "")}
                 onRefresh={fetchTransfers}
               />
@@ -365,6 +374,13 @@ function App() {
                 <BottomInspector
                   transfer={selectedTransfer}
                   onClose={() => setSelectedTransfer(null)}
+                  onStreamMedia={(fileName, isTorrent) =>
+                    setActiveMedia({
+                      id: selectedTransfer.id,
+                      title: fileName,
+                      protocol: isTorrent ? "BitTorrent" : "Iroh",
+                    })
+                  }
                 />
               )}
             </div>
@@ -377,6 +393,13 @@ function App() {
                 setActiveView("transfers-all");
                 fetchTransfers();
               }}
+              onStreamMedia={(title, protocol) =>
+                setActiveMedia({
+                  id: "channel-stream",
+                  title,
+                  protocol,
+                })
+              }
             />
           )}
 
@@ -391,6 +414,12 @@ function App() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSuccess={fetchTransfers}
+      />
+
+      {/* Floating Picture-in-Picture & Modal Media Player */}
+      <MediaPlayer
+        media={activeMedia}
+        onClose={() => setActiveMedia(null)}
       />
     </div>
   );

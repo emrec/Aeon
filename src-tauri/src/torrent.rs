@@ -177,4 +177,61 @@ impl TorrentEngine {
         let id = TorrentIdOrHash::parse(id_or_hash).ok()?;
         self.api.api_torrent_details(id).ok()
     }
+
+    pub fn get_media_files(&self, id_or_hash: &str) -> Vec<MediaFile> {
+        let details = match self.get_details(id_or_hash) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+
+        let files = match details.files {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+
+        files
+            .into_iter()
+            .enumerate()
+            .map(|(idx, file)| {
+                let name = file.name;
+                let lower = name.to_lowercase();
+                
+                let is_video = lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".webm") || lower.ends_with(".avi") || lower.ends_with(".mov");
+                let is_audio = lower.ends_with(".mp3") || lower.ends_with(".flac") || lower.ends_with(".wav") || lower.ends_with(".ogg") || lower.ends_with(".m4a");
+                let is_subtitle = lower.ends_with(".srt") || lower.ends_with(".vtt") || lower.ends_with(".sub");
+
+                let mime_type = if is_video {
+                    if lower.ends_with(".webm") { "video/webm".to_string() } else { "video/mp4".to_string() }
+                } else if is_audio {
+                    if lower.ends_with(".mp3") { "audio/mp3".to_string() } else { "audio/ogg".to_string() }
+                } else if is_subtitle {
+                    "text/vtt".to_string()
+                } else {
+                    "application/octet-stream".to_string()
+                };
+
+                MediaFile {
+                    file_index: idx,
+                    name,
+                    size: file.length,
+                    is_video,
+                    is_audio,
+                    is_subtitle,
+                    mime_type,
+                }
+            })
+            .collect()
+    }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaFile {
+    pub file_index: usize,
+    pub name: String,
+    pub size: u64,
+    pub is_video: bool,
+    pub is_audio: bool,
+    pub is_subtitle: bool,
+    pub mime_type: String,
+}
+

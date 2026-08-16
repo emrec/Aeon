@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, ArrowDown, ArrowUp, Activity, FileText, MessageSquare, ShieldCheck, Copy, Check } from "lucide-react";
+import { X, ArrowDown, ArrowUp, Activity, FileText, MessageSquare, ShieldCheck, Copy, Check, Play } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface TransferItem {
@@ -23,9 +23,10 @@ export interface TransferItem {
 interface BottomInspectorProps {
   transfer: TransferItem | null;
   onClose: () => void;
+  onStreamMedia?: (name: string, isTorrent: boolean) => void;
 }
 
-export function BottomInspector({ transfer, onClose }: BottomInspectorProps) {
+export function BottomInspector({ transfer, onClose, onStreamMedia }: BottomInspectorProps) {
   const [activeTab, setActiveTab] = useState<"general" | "files" | "peers" | "community">("general");
   const [copied, setCopied] = useState(false);
   const [details, setDetails] = useState<any>(null);
@@ -227,33 +228,57 @@ export function BottomInspector({ transfer, onClose }: BottomInspectorProps) {
         {activeTab === "files" && (
           <div className="h-full flex flex-col">
             <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase pb-2 border-b border-slate-800">
-              <div className="col-span-8">File Name</div>
+              <div className="col-span-7">File Name</div>
               <div className="col-span-2 text-right">Size</div>
-              <div className="col-span-2 text-right">Priority</div>
+              <div className="col-span-1 text-right">Priority</div>
+              <div className="col-span-2 text-right">Action</div>
             </div>
             <div className="space-y-1.5 mt-2 overflow-y-auto flex-1">
               {details?.files && details.files.length > 0 ? (
-                details.files.map((file: any, idx: number) => (
-                  <div key={idx} className="grid grid-cols-12 text-xs py-1.5 px-2 hover:bg-slate-900/40 rounded-lg items-center text-slate-300">
-                    <div className="col-span-8 flex items-center gap-2 truncate">
-                      <FileText size={14} className="text-blue-400 shrink-0" />
-                      <span className="truncate">{file.filename || file.name || `File ${idx + 1}`}</span>
+                details.files.map((file: any, idx: number) => {
+                  const fname = file.filename || file.name || `File ${idx + 1}`;
+                  return (
+                    <div key={idx} className="grid grid-cols-12 text-xs py-1.5 px-2 hover:bg-slate-900/40 rounded-lg items-center text-slate-300">
+                      <div className="col-span-7 flex items-center gap-2 truncate">
+                        <FileText size={14} className="text-blue-400 shrink-0" />
+                        <span className="truncate">{fname}</span>
+                      </div>
+                      <div className="col-span-2 text-right font-mono text-slate-400">{formatSize(file.len || file.length || 0)}</div>
+                      <div className="col-span-1 text-right">
+                        <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[9px] font-bold">Normal</span>
+                      </div>
+                      <div className="col-span-2 text-right flex justify-end">
+                        <button
+                          onClick={() => {
+                            if (onStreamMedia) onStreamMedia(fname, transfer.is_torrent);
+                          }}
+                          className="px-2 py-0.5 bg-blue-600/15 hover:bg-blue-600 text-blue-400 hover:text-white rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Play size={10} /> Stream
+                        </button>
+                      </div>
                     </div>
-                    <div className="col-span-2 text-right font-mono text-slate-400">{formatSize(file.len || file.size || 0)}</div>
-                    <div className="col-span-2 text-right">
-                      <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-[10px] font-bold">Normal</span>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="grid grid-cols-12 text-xs py-2 px-2 hover:bg-slate-900/40 rounded-lg items-center text-slate-300">
-                  <div className="col-span-8 flex items-center gap-2 truncate">
+                  <div className="col-span-7 flex items-center gap-2 truncate">
                     <FileText size={14} className="text-blue-400 shrink-0" />
                     <span className="truncate">{transfer.name}</span>
                   </div>
                   <div className="col-span-2 text-right font-mono text-slate-400">{formatSize(transfer.size)}</div>
-                  <div className="col-span-2 text-right">
-                    <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-[10px] font-bold">Normal</span>
+                  <div className="col-span-1 text-right">
+                    <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[9px] font-bold">Normal</span>
+                  </div>
+                  <div className="col-span-2 text-right flex justify-end">
+                    <button
+                      onClick={() => {
+                        if (onStreamMedia) onStreamMedia(transfer.name, transfer.is_torrent);
+                      }}
+                      className="px-2 py-0.5 bg-blue-600/15 hover:bg-blue-600 text-blue-400 hover:text-white rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Play size={10} /> Stream
+                    </button>
                   </div>
                 </div>
               )}

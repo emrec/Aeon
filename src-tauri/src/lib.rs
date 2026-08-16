@@ -160,6 +160,11 @@ async fn remove_transfer(state: tauri::State<'_, daemon::MockIrohClient>, id: St
 }
 
 #[tauri::command]
+async fn get_media_files(state: tauri::State<'_, daemon::MockIrohClient>, id: String) -> Result<Vec<torrent::MediaFile>, String> {
+    Ok(state.torrent.get_media_files(&id))
+}
+
+#[tauri::command]
 async fn get_torrent_details(state: tauri::State<'_, daemon::MockIrohClient>, id: String) -> Result<Option<serde_json::Value>, String> {
     if let Some(details) = state.torrent.get_details(&id) {
         Ok(Some(serde_json::to_value(details).map_err(|e| e.to_string())?))
@@ -290,6 +295,7 @@ pub fn run() {
             resume_transfer,
             remove_transfer,
             get_torrent_details,
+            get_media_files,
             get_transfers,
             get_gossip_peers,
             share_file,
