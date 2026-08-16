@@ -11,6 +11,7 @@ pub struct MockIrohClient {
     pub peer_count: u32,
     pub transfers: std::sync::Arc<std::sync::Mutex<Vec<crate::transfer::TransferState>>>,
     pub nostr: Client,
+    pub torrent: crate::torrent::TorrentEngine,
 }
 
 pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
@@ -26,6 +27,12 @@ pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
         .spawn();
 
     let transfers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    // Initialize BitTorrent Engine
+    let downloads_dir = dirs::download_dir()
+        .unwrap_or_else(|| data_dir.join("downloads"))
+        .join("Aeon");
+    let torrent = crate::torrent::TorrentEngine::new(downloads_dir).await?;
 
     // Load or generate Nostr keys
     let keys_path = data_dir.join("nostr_keys.txt");
@@ -60,5 +67,6 @@ pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
         peer_count: 12,
         transfers,
         nostr,
+        torrent,
     })
 }

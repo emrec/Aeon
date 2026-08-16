@@ -1,8 +1,29 @@
 mod daemon;
 mod metadata;
+mod torrent;
 mod transfer;
 mod trust;
 use iroh_blobs::ticket::BlobTicket;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedTransfer {
+    pub id: String,
+    pub hash: String,
+    pub name: String,
+    pub progress: f64,
+    pub size: u64,
+    pub down_speed: String,
+    pub up_speed: String,
+    pub eta: String,
+    pub status: String,
+    pub seeds: usize,
+    pub peers: usize,
+    pub ratio: f64,
+    pub protocol: String, // "BitTorrent" | "Iroh"
+    pub is_torrent: bool,
+    pub output_folder: String,
+}
 
 #[tauri::command]
 async fn publish(state: tauri::State<'_, daemon::MockIrohClient>, name: String, size: u64, hash: String, channel: String) -> Result<(), String> {
@@ -22,7 +43,129 @@ async fn query(state: tauri::State<'_, daemon::MockIrohClient>, channel: String)
 
 #[tauri::command]
 async fn download(state: tauri::State<'_, daemon::MockIrohClient>, hash: String) -> Result<(), String> {
-    transfer::start_download(&state, hash).await
+    if hash.starts_with("magnet:?") || (hash.len() == 40 && !hash.contains('.')) {
+        state.torrent.add_magnet(&hash, None).await.map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        transfer::start_download(&state, hash).await
+    }
+}
+
+#[tauri::command]
+async fn add_torrent_magnet(state: tauri::State<'_, daemon::MockIrohClient>, magnet: String, output_folder: Option<String>) -> Result<String, String> {
+    state.torrent.add_magnet(&magnet, output_folder).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn add_torrent_file(state: tauri::State<'_, daemon::MockIrohClient>, output_folder: Option<String>) -> Result<String, String> {
+    let file_path = rfd::AsyncFileDialog::new()
+        .set_title("Select .torrent File")
+        .add_filter("Torrent Files", &["torrent"])
+        .pick_file()
+        .await;
+
+    if let Some(file_handle) = file_path {
+        let path = file_handle.path().to_path_buf();
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        state.torrent.add_torrent_bytes(bytes, output_folder).await.map_err(|e| e.to_string())
+    } else {
+        Err("Selection cancelled".into())
+    }
+}
+
+#[tauri::command]
+async fn get_all_transfers(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<Vec<UnifiedTransfer>, String> {
+    let mut unified = Vec::new();
+
+    // 1. BitTorrent items
+    let torrents = state.torrent.list_torrents();
+    for t in torrents {
+        unified.push(UnifiedTransfer {
+            id: t.id.to_string(),
+            hash: t.info_hash,
+            name: t.name,
+            progress: t.progress,
+            size: t.total_bytes,
+            down_speed: t.down_speed,
+            up_speed: t.up_speed,
+            eta: t.eta,
+            status: t.status,
+            seeds: t.seeds,
+            peers: t.peers,
+            ratio: t.ratio,
+            protocol: "BitTorrent".to_string(),
+            is_torrent: true,
+            output_folder: "".to_string(),
+        });
+    }
+
+    // 2. Iroh items
+    {
+        let guard = state.transfers.lock().unwrap();
+        for item in guard.iter() {
+            let status = if item.is_downloading {
+                if item.progress >= 100.0 { "Completed".to_string() } else { "Downloading".to_string() }
+            } else {
+                "Seeding".to_string()
+            };
+
+            unified.push(UnifiedTransfer {
+                id: item.hash.clone(),
+                hash: item.hash.clone(),
+                name: item.name.clone(),
+                progress: item.progress as f64,
+                size: item.size,
+                down_speed: item.speed.clone(),
+                up_speed: "0 KB/s".to_string(),
+                eta: item.eta.clone(),
+                status,
+                seeds: item.peers as usize,
+                peers: item.peers as usize,
+                ratio: 1.0,
+                protocol: "Iroh".to_string(),
+                is_torrent: false,
+                output_folder: "".to_string(),
+            });
+        }
+    }
+
+    Ok(unified)
+}
+
+#[tauri::command]
+async fn pause_transfer(state: tauri::State<'_, daemon::MockIrohClient>, id: String, is_torrent: bool) -> Result<(), String> {
+    if is_torrent {
+        state.torrent.pause(&id).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn resume_transfer(state: tauri::State<'_, daemon::MockIrohClient>, id: String, is_torrent: bool) -> Result<(), String> {
+    if is_torrent {
+        state.torrent.resume(&id).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_transfer(state: tauri::State<'_, daemon::MockIrohClient>, id: String, is_torrent: bool, delete_files: Option<bool>) -> Result<(), String> {
+    if is_torrent {
+        state.torrent.delete(&id, delete_files.unwrap_or(false)).await.map_err(|e| e.to_string())?;
+    } else {
+        let mut guard = state.transfers.lock().unwrap();
+        guard.retain(|x| x.hash != id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_torrent_details(state: tauri::State<'_, daemon::MockIrohClient>, id: String) -> Result<Option<serde_json::Value>, String> {
+    if let Some(details) = state.torrent.get_details(&id) {
+        Ok(Some(serde_json::to_value(details).map_err(|e| e.to_string())?))
+    } else {
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -122,13 +265,6 @@ async fn share_folder(state: tauri::State<'_, daemon::MockIrohClient>) -> Result
     }
 }
 
-#[tauri::command]
-async fn remove_transfer(state: tauri::State<'_, daemon::MockIrohClient>, hash: String) -> Result<(), String> {
-    let mut guard = state.transfers.lock().unwrap();
-    guard.retain(|x| x.hash != hash);
-    Ok(())
-}
-
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -143,7 +279,22 @@ pub fn run() {
             app.manage(client);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![publish, query, download, get_transfers, get_gossip_peers, share_file, share_folder, remove_transfer])
+        .invoke_handler(tauri::generate_handler![
+            publish,
+            query,
+            download,
+            add_torrent_magnet,
+            add_torrent_file,
+            get_all_transfers,
+            pause_transfer,
+            resume_transfer,
+            remove_transfer,
+            get_torrent_details,
+            get_transfers,
+            get_gossip_peers,
+            share_file,
+            share_folder
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
