@@ -17,25 +17,29 @@ pub struct NormalizedTorrent {
     pub uploaded_bytes: u64,
     pub down_speed: String,
     pub up_speed: String,
+    pub down_speed_bytes: u64,
+    pub up_speed_bytes: u64,
     pub eta: String,
     pub seeds: usize,
     pub peers: usize,
     pub status: String,
     pub ratio: f64,
     pub protocol: String, // "BitTorrent"
+    pub output_folder: String,
 }
 
 #[derive(Clone)]
 pub struct TorrentEngine {
     pub api: Api,
+    pub download_dir: PathBuf,
 }
 
 impl TorrentEngine {
     pub async fn new(download_dir: PathBuf) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&download_dir)?;
-        let session = Session::new(download_dir).await?;
+        let session = Session::new(download_dir.clone()).await?;
         let api = Api::new(session, None);
-        Ok(Self { api })
+        Ok(Self { api, download_dir })
     }
 
     pub async fn add_magnet(&self, magnet: &str, output_folder: Option<String>) -> anyhow::Result<String> {
@@ -92,12 +96,19 @@ impl TorrentEngine {
 
     pub fn list_torrents(&self) -> Vec<NormalizedTorrent> {
         let list = self.api.api_torrent_list_ext(ApiTorrentListOpts { with_stats: true });
+        let default_folder = self.download_dir.to_string_lossy().to_string();
+
         list.torrents
             .into_iter()
             .map(|t| {
                 let id = t.id.unwrap_or(0);
                 let info_hash = t.info_hash;
-                let name = t.name.unwrap_or_else(|| "Torrent Loading...".to_string());
+                let name = t.name.unwrap_or_else(|| "Torrent Metadata Fetching...".to_string());
+                let output_folder = if t.output_folder.is_empty() {
+                    default_folder.clone()
+                } else {
+                    t.output_folder
+                };
                 
                 let mut progress = 0.0;
                 let mut total_bytes = 0;
@@ -105,6 +116,8 @@ impl TorrentEngine {
                 let mut uploaded_bytes = 0;
                 let mut down_speed = "0 KB/s".to_string();
                 let mut up_speed = "0 KB/s".to_string();
+                let mut down_speed_bytes: u64 = 0;
+                let mut up_speed_bytes: u64 = 0;
                 let mut eta = "-".to_string();
                 let mut seeds = 0;
                 let mut peers = 0;
@@ -123,24 +136,35 @@ impl TorrentEngine {
                         ratio = uploaded_bytes as f64 / downloaded_bytes as f64;
                     }
 
-                    if stats.finished {
+                    let state_str = format!("{:?}", stats.state).to_lowercase();
+                    if state_str.contains("pause") {
+                        status = "Paused".to_string();
+                    } else if state_str.contains("err") {
+                        status = "Error".to_string();
+                    } else if stats.finished {
                         status = "Seeding".to_string();
                         progress = 100.0;
+                    } else if state_str.contains("init") {
+                        status = "Initializing".to_string();
+                    } else {
+                        status = "Downloading".to_string();
                     }
 
                     if let Some(live) = stats.live {
-                        let ds = live.download_speed.mbps * 125.0; // convert to KB/s approx
-                        if ds > 1024.0 {
-                            down_speed = format!("{:.1} MB/s", ds / 1024.0);
+                        let ds_kb = live.download_speed.mbps * 125.0; // convert Mbps to KB/s
+                        down_speed_bytes = (ds_kb * 1024.0) as u64;
+                        if ds_kb > 1024.0 {
+                            down_speed = format!("{:.1} MB/s", ds_kb / 1024.0);
                         } else {
-                            down_speed = format!("{:.0} KB/s", ds);
+                            down_speed = format!("{:.0} KB/s", ds_kb);
                         }
 
-                        let us = live.upload_speed.mbps * 125.0;
-                        if us > 1024.0 {
-                            up_speed = format!("{:.1} MB/s", us / 1024.0);
+                        let us_kb = live.upload_speed.mbps * 125.0;
+                        up_speed_bytes = (us_kb * 1024.0) as u64;
+                        if us_kb > 1024.0 {
+                            up_speed = format!("{:.1} MB/s", us_kb / 1024.0);
                         } else {
-                            up_speed = format!("{:.0} KB/s", us);
+                            up_speed = format!("{:.0} KB/s", us_kb);
                         }
 
                         peers = live.snapshot.peer_stats.live;
@@ -162,12 +186,15 @@ impl TorrentEngine {
                     uploaded_bytes,
                     down_speed,
                     up_speed,
+                    down_speed_bytes,
+                    up_speed_bytes,
                     eta,
                     seeds: seeds as usize,
                     peers: peers as usize,
                     status,
                     ratio,
                     protocol: "BitTorrent".to_string(),
+                    output_folder,
                 }
             })
             .collect()
@@ -184,6 +211,12 @@ impl TorrentEngine {
             None => return Vec::new(),
         };
 
+        let base_dir = if !details.output_folder.is_empty() {
+            PathBuf::from(&details.output_folder)
+        } else {
+            self.download_dir.clone()
+        };
+
         let files = match details.files {
             Some(f) => f,
             None => return Vec::new(),
@@ -193,6 +226,15 @@ impl TorrentEngine {
             .into_iter()
             .enumerate()
             .map(|(idx, file)| {
+                let mut full_path = base_dir.clone();
+                if !file.components.is_empty() {
+                    for comp in &file.components {
+                        full_path.push(comp);
+                    }
+                } else {
+                    full_path.push(&file.name);
+                }
+
                 let name = file.name;
                 let lower = name.to_lowercase();
                 
@@ -213,6 +255,7 @@ impl TorrentEngine {
                 MediaFile {
                     file_index: idx,
                     name,
+                    path: full_path.to_string_lossy().to_string(),
                     size: file.length,
                     is_video,
                     is_audio,
@@ -228,10 +271,10 @@ impl TorrentEngine {
 pub struct MediaFile {
     pub file_index: usize,
     pub name: String,
+    pub path: String,
     pub size: u64,
     pub is_video: bool,
     pub is_audio: bool,
     pub is_subtitle: bool,
     pub mime_type: String,
 }
-

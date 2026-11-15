@@ -2,6 +2,7 @@ use anyhow::Result;
 use iroh::Endpoint;
 use iroh_blobs::store::fs::FsStore;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use nostr_sdk::prelude::*;
 
 #[derive(Clone)]
@@ -9,9 +10,11 @@ pub struct MockIrohClient {
     pub endpoint: Endpoint,
     pub store: FsStore,
     pub peer_count: u32,
-    pub transfers: std::sync::Arc<std::sync::Mutex<Vec<crate::transfer::TransferState>>>,
+    pub transfers: Arc<Mutex<Vec<crate::transfer::TransferState>>>,
     pub nostr: Client,
     pub torrent: crate::torrent::TorrentEngine,
+    pub trust: Arc<Mutex<crate::trust::TrustStore>>,
+    pub default_download_dir: PathBuf,
 }
 
 pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
@@ -26,13 +29,16 @@ pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
         .accept(iroh_blobs::ALPN, blobs)
         .spawn();
 
-    let transfers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let transfers = Arc::new(Mutex::new(Vec::new()));
 
     // Initialize BitTorrent Engine
     let downloads_dir = dirs::download_dir()
         .unwrap_or_else(|| data_dir.join("downloads"))
         .join("Aeon");
-    let torrent = crate::torrent::TorrentEngine::new(downloads_dir).await?;
+    let torrent = crate::torrent::TorrentEngine::new(downloads_dir.clone()).await?;
+
+    // Initialize Persistent Web of Trust Store
+    let trust = Arc::new(Mutex::new(crate::trust::TrustStore::load(&data_dir)));
 
     // Load or generate Nostr keys
     let keys_path = data_dir.join("nostr_keys.txt");
@@ -53,20 +59,25 @@ pub async fn start_memory_node(data_dir: PathBuf) -> Result<MockIrohClient> {
         k
     };
 
-    // Configure Nostr client
+    // Configure Nostr client & connect in background so window startup never blocks
     let nostr = Client::new(&keys);
-    nostr.add_relay("wss://relay.damus.io").await.ok();
-    nostr.add_relay("wss://nos.lol").await.ok();
-    nostr.add_relay("wss://relay.snort.social").await.ok();
-    nostr.add_relay("wss://relay.primal.net").await.ok();
-    nostr.connect().await;
+    let nostr_bg = nostr.clone();
+    tokio::spawn(async move {
+        let _ = nostr_bg.add_relay("wss://relay.damus.io").await;
+        let _ = nostr_bg.add_relay("wss://nos.lol").await;
+        let _ = nostr_bg.add_relay("wss://relay.snort.social").await;
+        let _ = nostr_bg.add_relay("wss://relay.primal.net").await;
+        nostr_bg.connect().await;
+    });
 
     Ok(MockIrohClient {
         endpoint,
         store,
-        peer_count: 12,
+        peer_count: 14,
         transfers,
         nostr,
         torrent,
+        trust,
+        default_download_dir: downloads_dir,
     })
 }

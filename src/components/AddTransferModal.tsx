@@ -11,10 +11,22 @@ interface AddTransferModalProps {
 export function AddTransferModal({ isOpen, onClose, onSuccess }: AddTransferModalProps) {
   const [inputUrl, setInputUrl] = useState("");
   const [selectedChannel, setSelectedChannel] = useState("Software");
+  const [customFolder, setCustomFolder] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleChooseFolder = async () => {
+    try {
+      const chosen = await invoke<string | null>("pick_download_folder");
+      if (chosen) {
+        setCustomFolder(chosen);
+      }
+    } catch (err) {
+      console.error("Failed to pick folder:", err);
+    }
+  };
 
   const handleAddMagnetOrTicket = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,14 +38,9 @@ export function AddTransferModal({ isOpen, onClose, onSuccess }: AddTransferModa
     const val = inputUrl.trim();
     try {
       if (val.startsWith("magnet:?") || (val.length === 40 && !val.includes("."))) {
-        // BitTorrent magnet or 40-char infohash
-        await invoke("add_torrent_magnet", { magnet: val, outputFolder: null });
-      } else if (val.startsWith("blob:") || val.length > 50) {
-        // Iroh blob ticket
-        await invoke("download", { hash: val });
+        await invoke("add_torrent_magnet", { magnet: val, outputFolder: customFolder });
       } else {
-        // General download fallback
-        await invoke("download", { hash: val });
+        await invoke("download", { hash: val, outputFolder: customFolder });
       }
 
       setInputUrl("");
@@ -51,7 +58,7 @@ export function AddTransferModal({ isOpen, onClose, onSuccess }: AddTransferModa
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      await invoke("add_torrent_file", { outputFolder: null });
+      await invoke("add_torrent_file", { outputFolder: customFolder });
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -65,7 +72,7 @@ export function AddTransferModal({ isOpen, onClose, onSuccess }: AddTransferModa
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
-      <div className="glass-card w-full max-w-lg p-6 rounded-2xl border border-slate-800 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+      <div className="glass-card w-full max-w-lg p-6 rounded-2xl border border-slate-800 shadow-2xl relative">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-900/60 transition-colors cursor-pointer"
@@ -126,12 +133,17 @@ export function AddTransferModal({ isOpen, onClose, onSuccess }: AddTransferModa
 
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Save Directory
+                Save Directory (Click to Change)
               </label>
-              <div className="px-3 py-2.5 bg-slate-900/50 border border-slate-800 rounded-xl text-xs text-slate-400 flex items-center gap-2 truncate">
+              <button
+                type="button"
+                onClick={handleChooseFolder}
+                title={customFolder || "Downloads/Aeon"}
+                className="w-full px-3 py-2.5 bg-slate-900/50 hover:bg-slate-800/70 border border-slate-800 hover:border-blue-500/40 rounded-xl text-xs text-slate-300 flex items-center gap-2 truncate cursor-pointer transition-colors"
+              >
                 <Folder size={14} className="text-blue-400 shrink-0" />
-                <span className="truncate">Downloads/Aeon</span>
-              </div>
+                <span className="truncate">{customFolder || "Downloads/Aeon"}</span>
+              </button>
             </div>
           </div>
 

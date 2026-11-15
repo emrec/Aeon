@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "Aeon",
-        "width": 800,
-        "height": 600
+        "title": "Aeon — Decentralized Buzz & Torrent Workspace",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 680
       }
     ],
     "security": {

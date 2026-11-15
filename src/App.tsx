@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import "./App.css";
 import { Search } from "./components/Search";
 import { Share } from "./components/Share";
@@ -19,31 +19,43 @@ import {
   ArrowDown,
   ArrowUp,
   FileCode2,
+  PauseCircle,
+  UploadCloud,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+
+function formatAggregateSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return "0 KB/s";
+  const kb = bytesPerSec / 1024;
+  if (kb >= 1024) {
+    return `${(kb / 1024).toFixed(1)} MB/s`;
+  }
+  return `${Math.round(kb)} KB/s`;
+}
 
 function App() {
   const [activeView, setActiveView] = useState("transfers-all");
   const [peerCount, setPeerCount] = useState(14);
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
-  const [selectedTransfer, setSelectedTransfer] = useState<TransferItem | null>(null);
+  const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeMedia, setActiveMedia] = useState<MediaStreamSource | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-  // Poll transfers and peer count
-  const fetchTransfers = async () => {
+  // Derive selectedTransfer from selectedTransferId so polling never resets intervals
+  const selectedTransfer = useMemo(
+    () => transfers.find((t) => t.id === selectedTransferId) || null,
+    [transfers, selectedTransferId]
+  );
+
+  const fetchTransfers = useCallback(async () => {
     try {
       const data = await invoke<TransferItem[]>("get_all_transfers");
       setTransfers(data);
-      // Auto-update selected transfer if active
-      if (selectedTransfer) {
-        const updated = data.find((t) => t.id === selectedTransfer.id);
-        if (updated) setSelectedTransfer(updated);
-      }
-    } catch (err) {
-      // Fallback for development / mock preview
-      if (transfers.length === 0) {
-        setTransfers([
+    } catch {
+      setTransfers((prev) => {
+        if (prev.length > 0) return prev;
+        return [
           {
             id: "1",
             hash: "magnet:?xt=urn:btih:2d8144b7880597b6e6d3dfd63a9a9efae3f533d3",
@@ -52,6 +64,8 @@ function App() {
             size: 5046586368,
             down_speed: "3.4 MB/s",
             up_speed: "420 KB/s",
+            down_speed_bytes: 3565158,
+            up_speed_bytes: 430080,
             eta: "4m 12s",
             status: "Downloading",
             seeds: 48,
@@ -69,6 +83,8 @@ function App() {
             size: 891289600,
             down_speed: "0 KB/s",
             up_speed: "1.1 MB/s",
+            down_speed_bytes: 0,
+            up_speed_bytes: 1153433,
             eta: "-",
             status: "Seeding",
             seeds: 12,
@@ -78,16 +94,16 @@ function App() {
             is_torrent: false,
             output_folder: "Downloads/Aeon",
           },
-        ]);
-      }
+        ];
+      });
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchTransfers();
-    const interval = setInterval(fetchTransfers, 1200);
+    const interval = setInterval(fetchTransfers, 1500);
     return () => clearInterval(interval);
-  }, [selectedTransfer]);
+  }, [fetchTransfers]);
 
   useEffect(() => {
     const fetchPeerCount = async () => {
@@ -95,7 +111,7 @@ function App() {
         const count = await invoke<number>("get_gossip_peers");
         setPeerCount(count);
       } catch {
-        // Mock fallback
+        // Fallback when running in browser preview
       }
     };
     fetchPeerCount();
@@ -103,14 +119,29 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Compute aggregate counts and speeds
-  const counts = useMemo(() => {
+  // Compute aggregate counts and live speeds
+  const stats = useMemo(() => {
+    let downBytes = 0;
+    let upBytes = 0;
+    for (const t of transfers) {
+      downBytes += t.down_speed_bytes || 0;
+      upBytes += t.up_speed_bytes || 0;
+    }
+
     return {
       all: transfers.length,
-      downloading: transfers.filter((t) => t.status.toLowerCase().includes("down")).length,
-      seeding: transfers.filter((t) => t.status.toLowerCase().includes("seed") || t.progress >= 100).length,
+      downloading: transfers.filter((t) => {
+        const s = t.status.toLowerCase();
+        return s.includes("down") || s.includes("init");
+      }).length,
+      seeding: transfers.filter((t) => {
+        const s = t.status.toLowerCase();
+        return s.includes("seed") || (t.progress >= 100 && !s.includes("pause"));
+      }).length,
       completed: transfers.filter((t) => t.progress >= 100).length,
       paused: transfers.filter((t) => t.status.toLowerCase().includes("pause")).length,
+      downSpeedFormatted: formatAggregateSpeed(downBytes),
+      upSpeedFormatted: formatAggregateSpeed(upBytes),
     };
   }, [transfers]);
 
@@ -123,8 +154,54 @@ function App() {
     }
   };
 
+  // Drag & Drop .torrent file support
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!isDraggingOver) setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      if (file.name.toLowerCase().endsWith(".torrent")) {
+        try {
+          const buf = await file.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buf));
+          await invoke("add_torrent_bytes_cmd", { bytes, outputFolder: null });
+          setActiveView("transfers-all");
+          fetchTransfers();
+        } catch (err) {
+          console.error("Failed to import dropped .torrent file:", err);
+        }
+      }
+    }
+  };
+
   return (
-    <div className="flex h-screen bg-[#090d16] text-[#f8fafc] overflow-hidden font-sans select-none">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="flex h-screen bg-[#090d16] text-[#f8fafc] overflow-hidden font-sans select-none relative"
+    >
+      {/* Drag & Drop Overlay */}
+      {isDraggingOver && (
+        <div className="fixed inset-4 z-50 rounded-3xl bg-blue-950/80 border-2 border-dashed border-blue-400 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none">
+          <UploadCloud size={48} className="text-blue-400 animate-bounce mb-3" />
+          <h3 className="text-lg font-bold text-white">Drop .torrent file anywhere to start downloading</h3>
+          <p className="text-xs text-blue-200 mt-1">BitTorrent v1/v2 swarm will initialize automatically</p>
+        </div>
+      )}
+
       {/* Decorative ambient background glows */}
       <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-900/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-indigo-900/10 blur-[150px] pointer-events-none" />
@@ -174,8 +251,8 @@ function App() {
                 <div className="flex items-center gap-2.5">
                   <HardDrive size={15} /> All Transfers
                 </div>
-                <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
-                  {counts.all}
+                <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
+                  {stats.all}
                 </span>
               </button>
 
@@ -190,8 +267,8 @@ function App() {
                 <div className="flex items-center gap-2.5">
                   <ArrowDown size={15} className="text-emerald-400" /> Downloading
                 </div>
-                <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
-                  {counts.downloading}
+                <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
+                  {stats.downloading}
                 </span>
               </button>
 
@@ -206,8 +283,8 @@ function App() {
                 <div className="flex items-center gap-2.5">
                   <ArrowUp size={15} className="text-blue-400" /> Seeding
                 </div>
-                <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
-                  {counts.seeding}
+                <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
+                  {stats.seeding}
                 </span>
               </button>
 
@@ -222,8 +299,24 @@ function App() {
                 <div className="flex items-center gap-2.5">
                   <Layers size={15} /> Completed
                 </div>
-                <span className="px-1.5 py-0.2 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
-                  {counts.completed}
+                <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
+                  {stats.completed}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setActiveView("transfers-paused")}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeView === "transfers-paused"
+                    ? "bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/20"
+                    : "text-slate-400 hover:bg-slate-900/60 hover:text-slate-200"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <PauseCircle size={15} className="text-amber-400" /> Paused
+                </div>
+                <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] font-mono">
+                  {stats.paused}
                 </span>
               </button>
             </div>
@@ -242,7 +335,7 @@ function App() {
                   <button
                     key={ch}
                     onClick={() => setActiveView(key)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-1.8 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                    className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       isSelected
                         ? "bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/20"
                         : "text-slate-400 hover:bg-slate-900/60 hover:text-slate-200"
@@ -309,11 +402,11 @@ function App() {
               <span className="text-[10px] text-slate-400 font-mono">{peerCount} peers</span>
             </div>
             <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/60 font-mono">
-              <span className="text-emerald-400 flex items-center gap-1">
-                <ArrowDown size={11} /> 3.4 MB/s
+              <span className="text-emerald-400 flex items-center gap-1" title="Total Live Download Speed">
+                <ArrowDown size={11} /> {stats.downSpeedFormatted}
               </span>
-              <span className="text-blue-400 flex items-center gap-1">
-                <ArrowUp size={11} /> 1.5 MB/s
+              <span className="text-blue-400 flex items-center gap-1" title="Total Live Upload Speed">
+                <ArrowUp size={11} /> {stats.upSpeedFormatted}
               </span>
             </div>
           </div>
@@ -359,12 +452,13 @@ function App() {
               <TransfersView
                 transfers={transfers}
                 selectedTransfer={selectedTransfer}
-                onSelectTransfer={setSelectedTransfer}
+                onSelectTransfer={(t) => setSelectedTransferId(t ? t.id : null)}
                 onStreamMedia={(item) =>
                   setActiveMedia({
                     id: item.id,
                     title: item.name,
                     protocol: item.protocol,
+                    filePath: item.output_folder ? `${item.output_folder}/${item.name}` : undefined,
                   })
                 }
                 statusFilter={activeView.replace("transfers-", "")}
@@ -373,12 +467,13 @@ function App() {
               {selectedTransfer && (
                 <BottomInspector
                   transfer={selectedTransfer}
-                  onClose={() => setSelectedTransfer(null)}
-                  onStreamMedia={(fileName, isTorrent) =>
+                  onClose={() => setSelectedTransferId(null)}
+                  onStreamMedia={(fileName, isTorrent, filePath) =>
                     setActiveMedia({
                       id: selectedTransfer.id,
                       title: fileName,
                       protocol: isTorrent ? "BitTorrent" : "Iroh",
+                      filePath,
                     })
                   }
                 />
@@ -417,10 +512,7 @@ function App() {
       />
 
       {/* Floating Picture-in-Picture & Modal Media Player */}
-      <MediaPlayer
-        media={activeMedia}
-        onClose={() => setActiveMedia(null)}
-      />
+      <MediaPlayer media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>
   );
 }

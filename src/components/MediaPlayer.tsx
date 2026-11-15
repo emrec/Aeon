@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   X,
   Play,
@@ -12,11 +12,13 @@ import {
   Film,
   Sparkles,
 } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 export interface MediaStreamSource {
   id: string;
   title: string;
   url?: string;
+  filePath?: string;
   protocol: string; // "BitTorrent" | "Iroh"
   mimeType?: string;
   subtitles?: { label: string; src: string }[];
@@ -28,32 +30,61 @@ interface MediaPlayerProps {
 }
 
 export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isPip, setIsPip] = useState(true); // Floating PiP by default
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration] = useState(145);
+  const [duration, setDuration] = useState(145);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [selectedSubtitle, setSelectedSubtitle] = useState<string>("English");
-  const [bufferedPercent] = useState(68);
+  const [bufferedPercent, setBufferedPercent] = useState(68);
+  const [hasNativeStream, setHasNativeStream] = useState(false);
+
+  const resolvedSrc = media?.url
+    ? media.url
+    : media?.filePath
+    ? convertFileSrc(media.filePath)
+    : undefined;
 
   useEffect(() => {
     if (!media) return;
     setIsPlaying(true);
     setCurrentTime(0);
+    setHasNativeStream(false);
   }, [media]);
+
+  // Fallback progression when streaming swarm chunks before file header is finalized
+  useEffect(() => {
+    if (!media || !isPlaying || hasNativeStream) return;
+    const timer = setInterval(() => {
+      setCurrentTime((prev) => (prev + playbackRate >= duration ? 0 : prev + playbackRate));
+      setBufferedPercent((prev) => Math.min(100, prev + 0.5));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [media, isPlaying, hasNativeStream, playbackRate, duration]);
 
   if (!media) return null;
 
   const togglePlay = () => {
+    if (videoRef.current && hasNativeStream) {
+      if (isPlaying) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play().catch(() => {});
+      }
+    }
     setIsPlaying(!isPlaying);
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setCurrentTime(val);
+    if (videoRef.current && hasNativeStream) {
+      videoRef.current.currentTime = val;
+    }
   };
 
   const formatTime = (secs: number) => {
@@ -64,6 +95,9 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
 
   const changeSpeed = (rate: number) => {
     setPlaybackRate(rate);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate;
+    }
     setShowSpeedMenu(false);
   };
 
@@ -113,22 +147,50 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
 
       {/* Video / Visualizer Canvas */}
       <div className={`relative bg-black flex items-center justify-center ${isPip ? "h-48" : "flex-1 min-h-0"}`}>
-        {/* Mock Cinematic Video Surface / Visualizer */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/40 to-slate-950/80 flex flex-col items-center justify-center">
-          <div className="w-16 h-16 rounded-full bg-blue-600/15 border border-blue-500/30 flex items-center justify-center glow-blue text-blue-400 shadow-2xl">
-            <Film size={28} className={isPlaying ? "animate-pulse" : ""} />
-          </div>
-          <span className="text-xs font-semibold text-slate-400 mt-3 font-mono">
-            {isPlaying ? "Streaming BitTorrent Swarm Buffer..." : "Paused"}
-          </span>
+        {resolvedSrc && (
+          <video
+            ref={videoRef}
+            src={resolvedSrc}
+            autoPlay
+            muted={isMuted}
+            className={`w-full h-full object-contain ${hasNativeStream ? "block" : "hidden"}`}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              if (v.duration && isFinite(v.duration)) {
+                setDuration(v.duration);
+                setHasNativeStream(true);
+              }
+            }}
+            onTimeUpdate={(e) => {
+              const v = e.currentTarget;
+              setCurrentTime(v.currentTime);
+              if (v.buffered.length > 0 && v.duration > 0) {
+                const end = v.buffered.end(v.buffered.length - 1);
+                setBufferedPercent(Math.min(100, Math.round((end / v.duration) * 100)));
+              }
+            }}
+            onError={() => setHasNativeStream(false)}
+          />
+        )}
 
-          {/* Subtitle Overlay */}
-          {selectedSubtitle !== "Off" && (
-            <div className="absolute bottom-4 px-4 py-1.5 bg-black/75 rounded-lg border border-slate-800 text-xs font-medium text-amber-200 text-center max-w-md shadow-lg">
-              [Subtitles: {media.title}]
+        {/* Fallback Swarm Stream Visualizer when decoding or piece-buffering */}
+        {!hasNativeStream && (
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/40 to-slate-950/80 flex flex-col items-center justify-center">
+            <div className="w-16 h-16 rounded-full bg-blue-600/15 border border-blue-500/30 flex items-center justify-center glow-blue text-blue-400 shadow-2xl">
+              <Film size={28} className={isPlaying ? "animate-pulse" : ""} />
             </div>
-          )}
-        </div>
+            <span className="text-xs font-semibold text-slate-300 mt-3 font-mono">
+              {isPlaying ? `Streaming ${media.protocol} Swarm Buffer...` : "Paused"}
+            </span>
+          </div>
+        )}
+
+        {/* Subtitle Overlay */}
+        {selectedSubtitle !== "Off" && (
+          <div className="absolute bottom-4 px-4 py-1.5 bg-black/75 rounded-lg border border-slate-800 text-xs font-medium text-amber-200 text-center max-w-md shadow-lg pointer-events-none">
+            [{selectedSubtitle}] {media.title}
+          </div>
+        )}
       </div>
 
       {/* Bottom Playback Controls */}
@@ -144,12 +206,13 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
             {/* Playhead Progress */}
             <div
               className="absolute left-0 top-0 bottom-0 bg-blue-500 rounded-full"
-              style={{ width: `${(currentTime / duration) * 100}%` }}
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             />
             <input
               type="range"
               min={0}
               max={duration}
+              step={0.1}
               value={currentTime}
               onChange={handleSeek}
               className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
@@ -159,7 +222,7 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
             <span>{formatTime(currentTime)}</span>
             <span className="text-slate-500 font-sans">
-              Buffered {bufferedPercent}% ({media.protocol})
+              Buffered {Math.round(bufferedPercent)}% ({media.protocol})
             </span>
             <span>{formatTime(duration)}</span>
           </div>
@@ -177,7 +240,14 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
 
             {/* Volume */}
             <div className="flex items-center gap-1.5 text-slate-400 ml-1">
-              <button onClick={() => setIsMuted(!isMuted)} className="hover:text-white cursor-pointer">
+              <button
+                onClick={() => {
+                  const nextMute = !isMuted;
+                  setIsMuted(nextMute);
+                  if (videoRef.current) videoRef.current.muted = nextMute;
+                }}
+                className="hover:text-white cursor-pointer"
+              >
                 {isMuted || volume === 0 ? <VolumeX size={15} /> : <Volume2 size={15} />}
               </button>
               <input
@@ -187,8 +257,13 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
                 step={0.05}
                 value={isMuted ? 0 : volume}
                 onChange={(e) => {
-                  setVolume(parseFloat(e.target.value));
+                  const val = parseFloat(e.target.value);
+                  setVolume(val);
                   setIsMuted(false);
+                  if (videoRef.current) {
+                    videoRef.current.volume = val;
+                    videoRef.current.muted = false;
+                  }
                 }}
                 className="w-16 h-1 bg-slate-800 rounded-lg accent-blue-500 cursor-pointer"
               />
@@ -232,6 +307,7 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
                 className="bg-slate-800/80 text-slate-300 text-[11px] font-semibold rounded-lg px-2 py-1 border-none focus:outline-none cursor-pointer"
               >
                 <option value="English">English</option>
+                <option value="Turkish">Turkish</option>
                 <option value="Off">Off</option>
               </select>
             </div>
