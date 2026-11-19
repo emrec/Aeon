@@ -23,19 +23,10 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-
-function formatAggregateSpeed(bytesPerSec: number): string {
-  if (!bytesPerSec || bytesPerSec <= 0) return "0 KB/s";
-  const kb = bytesPerSec / 1024;
-  if (kb >= 1024) {
-    return `${(kb / 1024).toFixed(1)} MB/s`;
-  }
-  return `${Math.round(kb)} KB/s`;
-}
+import { formatAggregateSpeed } from "./utils/format";
 
 function App() {
   const [activeView, setActiveView] = useState("transfers-all");
-  const [peerCount, setPeerCount] = useState(14);
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
   const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -105,27 +96,15 @@ function App() {
     return () => clearInterval(interval);
   }, [fetchTransfers]);
 
-  useEffect(() => {
-    const fetchPeerCount = async () => {
-      try {
-        const count = await invoke<number>("get_gossip_peers");
-        setPeerCount(count);
-      } catch {
-        // Fallback when running in browser preview
-      }
-    };
-    fetchPeerCount();
-    const interval = setInterval(fetchPeerCount, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Compute aggregate counts and live speeds
+  // Compute aggregate counts, live peers, and live speeds
   const stats = useMemo(() => {
     let downBytes = 0;
     let upBytes = 0;
+    let activePeers = 0;
     for (const t of transfers) {
       downBytes += t.down_speed_bytes || 0;
       upBytes += t.up_speed_bytes || 0;
+      activePeers += t.peers || 0;
     }
 
     return {
@@ -142,6 +121,7 @@ function App() {
       paused: transfers.filter((t) => t.status.toLowerCase().includes("pause")).length,
       downSpeedFormatted: formatAggregateSpeed(downBytes),
       upSpeedFormatted: formatAggregateSpeed(upBytes),
+      peerCount: 14 + activePeers,
     };
   }, [transfers]);
 
@@ -399,7 +379,7 @@ function App() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-[11px] font-semibold text-slate-200">Decentralized Mesh</span>
               </div>
-              <span className="text-[10px] text-slate-400 font-mono">{peerCount} peers</span>
+              <span className="text-[10px] text-slate-400 font-mono">{stats.peerCount} peers</span>
             </div>
             <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/60 font-mono">
               <span className="text-emerald-400 flex items-center gap-1" title="Total Live Download Speed">
@@ -453,14 +433,28 @@ function App() {
                 transfers={transfers}
                 selectedTransfer={selectedTransfer}
                 onSelectTransfer={(t) => setSelectedTransferId(t ? t.id : null)}
-                onStreamMedia={(item) =>
+                onStreamMedia={async (item) => {
+                  let resolvedPath = item.output_folder ? `${item.output_folder}/${item.name}` : undefined;
+                  let resolvedTitle = item.name;
+                  if (item.is_torrent) {
+                    try {
+                      const files = await invoke<any[]>("get_media_files", { id: item.id });
+                      const playable = files.find((f) => f.is_video || f.is_audio);
+                      if (playable) {
+                        resolvedPath = playable.path;
+                        resolvedTitle = playable.name;
+                      }
+                    } catch {
+                      // fallback to transfer name
+                    }
+                  }
                   setActiveMedia({
                     id: item.id,
-                    title: item.name,
+                    title: resolvedTitle,
                     protocol: item.protocol,
-                    filePath: item.output_folder ? `${item.output_folder}/${item.name}` : undefined,
-                  })
-                }
+                    filePath: resolvedPath,
+                  });
+                }}
                 statusFilter={activeView.replace("transfers-", "")}
                 onRefresh={fetchTransfers}
               />
@@ -499,7 +493,7 @@ function App() {
           )}
 
           {activeView === "search" && <Search />}
-          {activeView === "share" && <Share />}
+          {activeView === "share" && <Share transfers={transfers} onRefresh={fetchTransfers} />}
           {activeView === "trust" && <TrustManager />}
         </main>
       </div>

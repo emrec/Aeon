@@ -69,8 +69,9 @@ pub async fn query_metadata(client: &crate::daemon::MockIrohClient, channel: &st
         .await
         .unwrap_or_default();
 
-    let trust_guard = client.trust.lock().unwrap();
+    let trust_guard = client.trust.lock().unwrap_or_else(|e| e.into_inner());
     let mut results = Vec::new();
+    let mut seen_hashes = std::collections::HashSet::new();
 
     for event in events {
         let pubkey_hex = event.pubkey.to_hex();
@@ -106,7 +107,7 @@ pub async fn query_metadata(client: &crate::daemon::MockIrohClient, channel: &st
             name = "Unnamed Shared Resource".to_string();
         }
 
-        if found_url {
+        if found_url && seen_hashes.insert(hash.clone()) {
             let short_pk = if pubkey_hex.len() > 10 {
                 format!("{}...{}", &pubkey_hex[..5], &pubkey_hex[pubkey_hex.len() - 4..])
             } else {
@@ -124,5 +125,6 @@ pub async fn query_metadata(client: &crate::daemon::MockIrohClient, channel: &st
         }
     }
 
+    results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(results)
 }

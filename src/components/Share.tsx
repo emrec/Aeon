@@ -1,20 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { X, HardDrive, Inbox, FileUp, FolderUp, Copy, Check, Info, Trash2, Globe } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { TransferItem } from "./BottomInspector";
+import { formatBytes } from "../utils/format";
 
-interface Transfer {
-  hash: string;
-  name: string;
-  progress: number;
-  size: number;
-  speed: string;
-  eta: string;
-  is_downloading: boolean;
-  peers: number;
+interface ShareProps {
+  transfers: TransferItem[];
+  onRefresh: () => Promise<void> | void;
 }
 
-export function Share() {
-  const [shares, setShares] = useState<Transfer[]>([]);
+export function Share({ transfers, onRefresh }: ShareProps) {
+  const shares = useMemo(
+    () => transfers.filter((t) => !t.is_torrent && (t.status === "Seeding" || t.progress >= 100)),
+    [transfers]
+  );
   const [generatedTicket, setGeneratedTicket] = useState<string | null>(null);
   const [newShareName, setNewShareName] = useState<string>("");
   const [newShareSize, setNewShareSize] = useState<number>(0);
@@ -29,39 +28,16 @@ export function Share() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishSuccess, setPublishSuccess] = useState(false);
 
-  const fetchShares = async () => {
-    try {
-      const list = await invoke<Transfer[]>("get_transfers");
-      setShares(list.filter((t) => !t.is_downloading));
-    } catch (err) {
-      console.error("Failed to fetch shared files:", err);
-    }
-  };
-
-  useEffect(() => {
-    fetchShares();
-    const interval = setInterval(fetchShares, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const formatSize = (bytes: number) => {
-    if (!bytes || bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  };
-
   const syncNewestShare = async () => {
     try {
-      const list = await invoke<Transfer[]>("get_transfers");
+      const list = await invoke<any[]>("get_transfers");
       const sharedList = list.filter((t) => !t.is_downloading);
-      setShares(sharedList);
       if (sharedList.length > 0) {
         const newest = sharedList[sharedList.length - 1];
         setNewShareName(newest.name);
         setNewShareSize(newest.size);
       }
+      await onRefresh();
     } catch (e) {
       console.error(e);
     }
@@ -124,7 +100,7 @@ export function Share() {
   const handleRemoveShare = async (hash: string) => {
     try {
       await invoke("remove_transfer", { id: hash, isTorrent: false, deleteFiles: false });
-      fetchShares();
+      await onRefresh();
     } catch (err) {
       console.error("Failed to remove shared content:", err);
     }
@@ -211,7 +187,7 @@ export function Share() {
                 ✓
               </div>
               <h3 className="font-bold text-slate-200 text-sm">
-                Successfully Seeding: {newShareName} ({formatSize(newShareSize)})
+                Successfully Seeding: {newShareName} ({formatBytes(newShareSize)})
               </h3>
             </div>
             <p className="text-xs text-slate-400 max-w-xl mb-4 leading-relaxed">
@@ -304,7 +280,7 @@ export function Share() {
                     <h3 className="font-semibold text-slate-200 truncate max-w-md">{s.name}</h3>
                     <div className="flex flex-wrap items-center gap-4 text-xs text-[#94a3b8] mt-1">
                       <span className="flex items-center gap-1">
-                        <HardDrive size={14} /> {formatSize(s.size)}
+                        <HardDrive size={14} /> {formatBytes(s.size)}
                       </span>
                       <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-blue-400 bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">
                         {s.peers} gossip peers

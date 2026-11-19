@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, ArrowDown, ArrowUp, Activity, FileText, MessageSquare, ShieldCheck, Copy, Check, Play, Send } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatBytes } from "../utils/format";
 
 export interface TransferItem {
   id: string;
@@ -78,14 +79,6 @@ export function BottomInspector({ transfer, onClose, onStreamMedia }: BottomInsp
     navigator.clipboard.writeText(transfer.hash);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const formatSize = (bytes: number) => {
-    if (!bytes || bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
   const handleAddReview = (e: React.FormEvent) => {
@@ -214,7 +207,7 @@ export function BottomInspector({ transfer, onClose, onStreamMedia }: BottomInsp
                 <div className="mt-2 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400">Total Size</span>
-                    <span className="font-bold text-slate-200">{formatSize(transfer.size)}</span>
+                    <span className="font-bold text-slate-200">{formatBytes(transfer.size, 2)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400">Progress</span>
@@ -305,7 +298,7 @@ export function BottomInspector({ transfer, onClose, onStreamMedia }: BottomInsp
                         <FileText size={14} className="text-blue-400 shrink-0" />
                         <span className="truncate" title={fpath || fname}>{fname}</span>
                       </div>
-                      <div className="col-span-2 text-right font-mono text-slate-400">{formatSize(fsize)}</div>
+                      <div className="col-span-2 text-right font-mono text-slate-400">{formatBytes(fsize, 2)}</div>
                       <div className="col-span-1 text-right">
                         <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[9px] font-bold">Normal</span>
                       </div>
@@ -328,7 +321,7 @@ export function BottomInspector({ transfer, onClose, onStreamMedia }: BottomInsp
                     <FileText size={14} className="text-blue-400 shrink-0" />
                     <span className="truncate">{transfer.name}</span>
                   </div>
-                  <div className="col-span-2 text-right font-mono text-slate-400">{formatSize(transfer.size)}</div>
+                  <div className="col-span-2 text-right font-mono text-slate-400">{formatBytes(transfer.size, 2)}</div>
                   <div className="col-span-1 text-right">
                     <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded text-[9px] font-bold">Normal</span>
                   </div>

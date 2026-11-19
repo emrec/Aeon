@@ -162,24 +162,27 @@ pub async fn start_download(
         let transfers_clone = client.transfers.clone();
         let hash_or_ticket_clone = hash_or_ticket.clone();
         tokio::spawn(async move {
-            for i in 1..=20 {
+            let mut step = 0u32;
+            while step < 20 {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                let mut guard = transfers_clone.lock().unwrap();
-                if let Some(t) = guard.iter_mut().find(|x| x.hash == hash_or_ticket_clone) {
-                    if t.is_paused {
-                        continue;
-                    }
-                    t.progress = (i as f32) * 5.0;
-                    t.down_speed_bytes = 12 * 1024 * 1024;
-                    t.speed = "12.0 MB/s".into();
-                    t.eta = format!("{}s", (20 - i) * 2);
-                    t.peers = 12;
-                    if i == 20 {
-                        t.is_downloading = false;
-                        t.down_speed_bytes = 0;
-                        t.speed = "0 KB/s".into();
-                        t.eta = "-".into();
-                    }
+                let mut guard = transfers_clone.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(t) = guard.iter_mut().find(|x| x.hash == hash_or_ticket_clone) else {
+                    break;
+                };
+                if t.is_paused {
+                    continue;
+                }
+                step += 1;
+                t.progress = (step as f32) * 5.0;
+                t.down_speed_bytes = 12 * 1024 * 1024;
+                t.speed = "12.0 MB/s".into();
+                t.eta = format!("{}s", (20 - step) * 2);
+                t.peers = 12;
+                if step == 20 {
+                    t.is_downloading = false;
+                    t.down_speed_bytes = 0;
+                    t.speed = "0 KB/s".into();
+                    t.eta = "-".into();
                 }
             }
         });

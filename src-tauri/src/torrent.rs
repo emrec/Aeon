@@ -152,7 +152,7 @@ impl TorrentEngine {
 
                     if let Some(live) = stats.live {
                         let ds_kb = live.download_speed.mbps * 125.0; // convert Mbps to KB/s
-                        down_speed_bytes = (ds_kb * 1024.0) as u64;
+                        down_speed_bytes = (live.download_speed.mbps * 125_000.0) as u64;
                         if ds_kb > 1024.0 {
                             down_speed = format!("{:.1} MB/s", ds_kb / 1024.0);
                         } else {
@@ -160,7 +160,7 @@ impl TorrentEngine {
                         }
 
                         let us_kb = live.upload_speed.mbps * 125.0;
-                        up_speed_bytes = (us_kb * 1024.0) as u64;
+                        up_speed_bytes = (live.upload_speed.mbps * 125_000.0) as u64;
                         if us_kb > 1024.0 {
                             up_speed = format!("{:.1} MB/s", us_kb / 1024.0);
                         } else {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Hash, Download, Send, FileCode2, Film, RefreshCw, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatBytes } from "../utils/format";
 
 interface ChannelFeedViewProps {
   channel: string;
@@ -28,11 +29,15 @@ export function ChannelFeedView({ channel, onDownloadStarted, onStreamMedia }: C
   const [inputMessage, setInputMessage] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
 
-  const formatBytes = (bytes: number) => {
-    if (!bytes || bytes <= 0) return "P2P Stream";
-    const mb = bytes / (1024 * 1024);
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-    return `${mb.toFixed(1)} MB`;
+  const storageKey = `aeon_channel_chat_${channel.toLowerCase()}`;
+
+  const loadLocalPosts = (): ChannelPost[] => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
   };
 
   const loadChannelFeed = async () => {
@@ -62,6 +67,8 @@ export function ChannelFeedView({ channel, onDownloadStarted, onStreamMedia }: C
       },
     ];
 
+    const localPosts = loadLocalPosts();
+
     try {
       const capitalized = channel.charAt(0).toUpperCase() + channel.slice(1).toLowerCase();
       const events = await invoke<any[]>("query", { channel: capitalized });
@@ -78,15 +85,15 @@ export function ChannelFeedView({ channel, onDownloadStarted, onStreamMedia }: C
           isTrusted: Boolean(ev.is_trusted),
           file: {
             name: ev.name,
-            size: formatBytes(ev.size),
+            size: ev.size > 0 ? formatBytes(ev.size) : "P2P Stream",
             hash: ev.hash,
             protocol: isMagnet ? "BitTorrent" : "Iroh",
           },
         };
       });
-      setMessages([...seedPosts, ...livePosts]);
+      setMessages([...seedPosts, ...livePosts, ...localPosts]);
     } catch {
-      setMessages(seedPosts);
+      setMessages([...seedPosts, ...localPosts]);
     } finally {
       setIsSyncing(false);
     }
@@ -121,6 +128,13 @@ export function ChannelFeedView({ channel, onDownloadStarted, onStreamMedia }: C
             }
           : undefined,
     };
+
+    const existingLocal = loadLocalPosts();
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([...existingLocal, newPost]));
+    } catch {
+      // ignore storage quota errors
+    }
 
     setMessages((prev) => [...prev, newPost]);
     setInputMessage("");

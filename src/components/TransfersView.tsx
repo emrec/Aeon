@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Play, Pause, Trash2, HardDrive, Copy, Check, Film, Search, ArrowUpDown, AlertTriangle, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { TransferItem } from "./BottomInspector";
+import { formatBytes } from "../utils/format";
 
 interface TransfersViewProps {
   transfers: TransferItem[];
@@ -28,14 +29,6 @@ export function TransfersView({
   const [sortAsc, setSortAsc] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<TransferItem | null>(null);
   const [deleteFromDisk, setDeleteFromDisk] = useState(false);
-
-  const formatSize = (bytes: number) => {
-    if (!bytes || bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  };
 
   const handlePause = async (e: React.MouseEvent, item: TransferItem) => {
     e.stopPropagation();
@@ -226,7 +219,7 @@ export function TransfersView({
 
                 {/* Size */}
                 <div className="col-span-1 font-mono text-slate-300 text-xs truncate">
-                  {formatSize(item.size)}
+                  {formatBytes(item.size)}
                 </div>
 
                 {/* Progress Bar */}

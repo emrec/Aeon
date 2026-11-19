@@ -1,10 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Search as SearchIcon, File as FileIcon, Star, MessageSquare, Loader2, ShieldCheck, CheckCircle2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatBytes } from "../utils/format";
+
+function deterministicSeeders(hash: string, isTrusted: boolean): number {
+  let sum = 0;
+  for (let i = 0; i < Math.min(hash.length, 16); i++) {
+    sum += hash.charCodeAt(i);
+  }
+  return (sum % 9) + (isTrusted ? 5 : 2);
+}
 
 export function Search() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
+  const [rawResults, setRawResults] = useState<any[]>([]);
   const [activeChannel, setActiveChannel] = useState("Software");
   const [loading, setLoading] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -19,36 +28,38 @@ export function Search() {
     try {
       const res = await invoke<any[]>("query", { channel: activeChannel });
 
-      const mapped = res.map((meta) => ({
-        hash: meta.hash,
-        name: meta.name,
-        size: meta.size > 0 ? (meta.size / (1024 * 1024)).toFixed(1) + " MB" : "Unknown size",
-        seeders: Math.floor(Math.random() * 8) + 2,
-        rating: meta.is_trusted ? "5.0" : "4.6",
-        comments: meta.is_trusted ? 4 : 1,
-        channel: meta.channel,
-        pubkey: meta.pubkey || "nostr...peer",
-        is_trusted: Boolean(meta.is_trusted),
-      }));
+      const mapped = res.map((meta) => {
+        const trusted = Boolean(meta.is_trusted);
+        return {
+          hash: meta.hash,
+          name: meta.name,
+          size: meta.size > 0 ? formatBytes(meta.size) : "Unknown size",
+          seeders: deterministicSeeders(meta.hash || meta.name, trusted),
+          rating: trusted ? "5.0" : "4.6",
+          comments: trusted ? 4 : 1,
+          channel: meta.channel,
+          pubkey: meta.pubkey || "nostr...peer",
+          is_trusted: trusted,
+        };
+      });
 
-      if (query.trim()) {
-        const lowerQuery = query.toLowerCase();
-        setResults(
-          mapped.filter(
-            (item) =>
-              item.name.toLowerCase().includes(lowerQuery) ||
-              item.hash.toLowerCase().includes(lowerQuery)
-          )
-        );
-      } else {
-        setResults(mapped);
-      }
+      setRawResults(mapped);
     } catch (err) {
       console.error("Query failed", err);
     } finally {
       setLoading(false);
     }
   };
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rawResults;
+    return rawResults.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.hash.toLowerCase().includes(q)
+    );
+  }, [rawResults, query]);
 
   useEffect(() => {
     fetchResults();

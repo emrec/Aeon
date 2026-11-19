@@ -56,6 +56,15 @@ export function MediaPlayer({ media, onClose }: MediaPlayerProps) {
     setHasNativeStream(false);
   }, [media]);
 
+  // Sync volume & playbackRate when native stream loads
+  useEffect(() => {
+    if (videoRef.current && hasNativeStream) {
+      videoRef.current.volume = volume;
+      videoRef.current.muted = isMuted;
+      videoRef.current.playbackRate = playbackRate;
+    }
+  }, [hasNativeStream, volume, isMuted, playbackRate]);
+
   // Fallback progression when streaming swarm chunks before file header is finalized
   useEffect(() => {
     if (!media || !isPlaying || hasNativeStream) return;

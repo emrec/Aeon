@@ -120,7 +120,7 @@ async fn add_torrent_file(
 
     if let Some(file_handle) = file_path {
         let path = file_handle.path().to_path_buf();
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
         state
             .torrent
             .add_torrent_bytes(bytes, output_folder)
@@ -384,6 +384,39 @@ async fn unblock_trust_node(
     Ok(guard.unblock_node(&pubkey))
 }
 
+fn record_shared_transfer(
+    client: &daemon::MockIrohClient,
+    hash: iroh_blobs::Hash,
+    format: iroh_blobs::BlobFormat,
+    name: String,
+    size: u64,
+    output_folder: String,
+) -> String {
+    let addr = client.endpoint.addr();
+    let ticket = BlobTicket::new(addr, hash, format);
+    let ticket_str = ticket.to_string();
+    let hash_str = hash.to_string();
+
+    let mut guard = client.transfers.lock().unwrap_or_else(|e| e.into_inner());
+    guard.retain(|x| x.hash != hash_str);
+    guard.push(transfer::TransferState {
+        hash: hash_str,
+        name,
+        progress: 100.0,
+        size,
+        speed: "0 KB/s".into(),
+        down_speed_bytes: 0,
+        up_speed_bytes: 0,
+        eta: "-".into(),
+        is_downloading: false,
+        is_paused: false,
+        peers: 1,
+        output_folder,
+    });
+
+    ticket_str
+}
+
 #[tauri::command]
 async fn share_file(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<String, String> {
     let file_path = rfd::AsyncFileDialog::new()
@@ -403,7 +436,7 @@ async fn share_file(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<S
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
         let size = metadata.len();
 
         let progress = state.store.add_path(&path);
@@ -411,29 +444,14 @@ async fn share_file(state: tauri::State<'_, daemon::MockIrohClient>) -> Result<S
             .await
             .map_err(|e| format!("Failed to import file: {}", e))?;
 
-        let addr = state.endpoint.addr();
-        let ticket = BlobTicket::new(addr, res.hash, res.format);
-        let ticket_str = ticket.to_string();
-
-        {
-            let mut guard = state.transfers.lock().unwrap();
-            guard.push(transfer::TransferState {
-                hash: res.hash.to_string(),
-                name,
-                progress: 100.0,
-                size,
-                speed: "0 KB/s".into(),
-                down_speed_bytes: 0,
-                up_speed_bytes: 0,
-                eta: "-".into(),
-                is_downloading: false,
-                is_paused: false,
-                peers: 1,
-                output_folder: folder,
-            });
-        }
-
-        Ok(ticket_str)
+        Ok(record_shared_transfer(
+            &state,
+            res.hash,
+            res.format,
+            name,
+            size,
+            folder,
+        ))
     } else {
         Err("Selection cancelled".into())
     }
@@ -454,7 +472,10 @@ async fn share_folder(state: tauri::State<'_, daemon::MockIrohClient>) -> Result
             .to_string_lossy()
             .into_owned();
         let folder_str = path.to_string_lossy().to_string();
-        let size = calc_dir_size(&path);
+        let path_for_size = path.clone();
+        let size = tokio::task::spawn_blocking(move || calc_dir_size(&path_for_size))
+            .await
+            .unwrap_or(0);
 
         let progress = state
             .store
@@ -467,29 +488,14 @@ async fn share_folder(state: tauri::State<'_, daemon::MockIrohClient>) -> Result
             .await
             .map_err(|e| format!("Failed to import folder: {}", e))?;
 
-        let addr = state.endpoint.addr();
-        let ticket = BlobTicket::new(addr, res.hash, res.format);
-        let ticket_str = ticket.to_string();
-
-        {
-            let mut guard = state.transfers.lock().unwrap();
-            guard.push(transfer::TransferState {
-                hash: res.hash.to_string(),
-                name,
-                progress: 100.0,
-                size,
-                speed: "0 KB/s".into(),
-                down_speed_bytes: 0,
-                up_speed_bytes: 0,
-                eta: "-".into(),
-                is_downloading: false,
-                is_paused: false,
-                peers: 1,
-                output_folder: folder_str,
-            });
-        }
-
-        Ok(ticket_str)
+        Ok(record_shared_transfer(
+            &state,
+            res.hash,
+            res.format,
+            name,
+            size,
+            folder_str,
+        ))
     } else {
         Err("Selection cancelled".into())
     }
